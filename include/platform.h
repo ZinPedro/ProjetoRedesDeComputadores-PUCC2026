@@ -189,7 +189,7 @@ static inline int aguardar_thread(thread_t thread) {
 
 static inline void dormir_milisegundos(unsigned int milisegundos){
     #ifdef _WIN32
-        Sleep(milissegundos);
+        Sleep(milisegundos);
     #else
         struct timespec tempo;
         tempo.tv_sec = milisegundos / 1000;

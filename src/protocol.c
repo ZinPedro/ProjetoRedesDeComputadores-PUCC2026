@@ -2,11 +2,34 @@
 #include <string.h>
 #include <stdio.h>
 
-mutex_t lock;
-
-void protocol_init() 
+int protocol_init(shared_data_t *shared_data)
 {
-    iniciar_mutex(&lock); // funcao para inicializar o mutex (por conta da multiplataforma usei essa funcao que generaliza para windows ou linux)
+    if(shared_data == NULL) //vai verificar se a memória compartilhada é valida
+    {
+        return 0;
+    }
+
+    shared_data -> nome_usuario[0] = '\0';
+    shared_data -> inicio = 0;
+    shared_data -> fim = 0;
+    shared_data -> quantidade = 0;
+
+    if(!iniciar_mutex(&shared_data -> lock))
+    {
+        return 0;
+    }
+
+    return 1;
+}
+
+void protocol_destroy(shared_data_t * shared_data)
+{
+    if(shared_data == NULL)
+    {
+        return;
+    }
+
+    destruir_mutex(&shared_data -> lock); // vai destruir o mutex que pertence ao cliente 
 }
 
 void parse_input(const char *linha, shared_data_t *shared_data) 
@@ -35,12 +58,12 @@ void parse_input(const char *linha, shared_data_t *shared_data)
         conteudo[MAX_MSG - 1] = '\0';
     }
 
-    bloquear_mutex(&lock); // Tranco o mutex porque vamos escrever na mem compartilhada
+    bloquear_mutex(&shared_data -> lock); // Tranco o mutex porque vamos escrever na mem compartilhada
 
     //verifica fila cheia
     if(shared_data->quantidade >= MAX_FILA){
         fprintf(stderr, "Fila de acoes cheia\n");
-        liberar_mutex(&lock);
+        liberar_mutex(&shared_data -> lock);
         return;
     }
 
@@ -52,18 +75,18 @@ void parse_input(const char *linha, shared_data_t *shared_data)
     shared_data->fim = (shared_data->fim + 1) % MAX_FILA;   //altera posição do fim da fila
     shared_data->quantidade++; //registra ação no numero de ações
 
-    liberar_mutex(&lock); // destranca o mutex
+    liberar_mutex(&shared_data -> lock); // destranca o mutex
 }
 
 tipo_acao_t process_shared_data(shared_data_t *shared_data, char *saida, int tam_saida) 
 {
     item_acao_t item;
 
-    bloquear_mutex(&lock);
+    bloquear_mutex(&shared_data ->lock);
 
     //verifica fila vazia
     if(shared_data->quantidade == 0){
-        liberar_mutex(&lock);
+        liberar_mutex(&shared_data -> lock);
         saida[0] = '\0';
         return ACAO_NENHUMA;
     }
@@ -97,7 +120,7 @@ tipo_acao_t process_shared_data(shared_data_t *shared_data, char *saida, int tam
             break;
     }
 
-    liberar_mutex(&lock);
+    liberar_mutex(&shared_data -> lock);
 
     return item.acao;
 }
