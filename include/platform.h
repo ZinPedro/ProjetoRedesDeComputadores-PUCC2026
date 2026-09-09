@@ -199,4 +199,16 @@ static inline void dormir_milisegundos(unsigned int milisegundos){
     #endif
 }
 
+// Essa funcao é para que quando o servidor aceite varios clientes, ele nao vai precisar ficar esperando cada thread terminar para ele aceitar um novo cliente, ele so "libera" essa thread desse liente e ja vai aceitar o proximo cliente
+
+static inline void desanexar_thread(thread_t thread)
+{
+    #ifdef _WIN32
+        CloseHandle(thread);
+    #else
+        pthread_detach(thread);
+    #endif
+    
+}
+
 #endif // PLATFORM_H
