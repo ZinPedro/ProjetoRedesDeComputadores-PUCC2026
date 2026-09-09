@@ -136,20 +136,162 @@ THREAD_FUNC(enviar_periodicamente) {
     return THREAD_RETURN;
 }
 
-int main(){
-
+socket_t criar_servidor (void){
     socket_t server_fd;
-    socket_t client_fd;
+
+    struct sockaddr_in server_addr = {0}; //informações servidor
+
+    //Criação do socket (IPv4, TCP, protocolo padrão)
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+
+    if (server_fd == PLATFORM_SOCKET_INVALIDO) {
+        mostrar_erro_socket("Erro ao criar o socket");
+
+        return PLATFORM_SOCKET_INVALIDO;
+    }
+
+    printf("Socket criado com sucesso.\n");
+
+    if(!configurar_reuso_endereco(server_fd)){
+        mostrar_erro_socket("Erro ao configurar reuso de endereço (setsockopt)");
+        
+        fechar_socket(server_fd);
+
+        return PLATFORM_SOCKET_INVALIDO;
+    }
+
+    //configura endereço do servidor (IPv4, qualquer endereço, porta definida)
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(PORT);
+
+    //configuração da bind (socket, endereço, tamanho do endereço)
+    if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == PLATFORM_SOCKET_ERRO) {
+        mostrar_erro_socket("Erro ao fazer bind");
+        fechar_socket(server_fd);
+        
+        return PLATFORM_SOCKET_INVALIDO;
+    }
+
+    printf("Bind realizado com sucesso na porta %d.\n", PORT);
+
+        //configuração do listen (socket, tamanho da fila de conexões)
+    if(listen(server_fd, 1) == PLATFORM_SOCKET_ERRO) {
+        mostrar_erro_socket("Erro no listen");
+        fechar_socket(server_fd);
+        
+        return PLATFORM_SOCKET_INVALIDO;
+    }
+    return server_fd;
+}
+
+int enviar_mensagem_conexao(DadosCliente *cliente){
 
     //vetor para armazenar a hora e mensagem de conexao (11:23: CONECTADO!!)
     char mensagem[64];
 
+    //obter a hora atual
+    time_t agora = time(NULL);
+    struct tm horario;
+
+    if(!obter_horario_local(&agora, &horario)){
+        fprintf(stderr, "Erro ao obter horario local.\n");
+
+        return 0;
+    }
+
+    //Montar mensagem
+    strftime(mensagem, sizeof(mensagem), "%H:%M: CONECTADO!!\n", &horario);
+
+    //enviar mensagem para o cliente
+    printf("Enviando ao Cliente: %s", mensagem);
+
+    //configuração do send (socket, mensagem, tamanho da mensagem, flags)
+    if(send(cliente -> client_fd, mensagem, (int)strlen(mensagem), 0) == PLATFORM_SOCKET_ERRO){
+        mostrar_erro_socket("Erro ao enviar mensagem");
+
+        return 0; //continua para aceitar novas conexões mesmo que uma falhe
+    }
+    return 1;
+}
+
+int inicializar_cliente(DadosCliente *cliente, socket_t client_fd, struct sockaddr_in *client_addr){
+    
+    //registro do cliente em uma estrutura de dados para controle de conexão
+    cliente->client_fd = client_fd;
+    cliente->conectado = 1; //marca o cliente como conectado
+
+    snprintf(cliente->protocolo.nome_usuario, MAX_NOME, "%s:%d", inet_ntoa(client_addr->sin_addr), ntohs(client_addr->sin_port));  // define o nome padrao do usuario como "IP:porta"
+    
+    //inicializa estrutura da fila
+    cliente->protocolo.inicio = 0;
+    cliente->protocolo.fim = 0;
+    cliente->protocolo.quantidade = 0;
+
+    //inicializa o mutex do cliente
+    if(!iniciar_mutex(&cliente->mutex)) {
+        fprintf(stderr, "Erro ao inicializar mutex para o cliente.\n");
+        return 0; // continua para aceitar novas conexões mesmo que uma falhe
+    }
+    return 1;
+}
+
+void limpar_cliente(DadosCliente *cliente){
+    destruir_mutex(&cliente->mutex);
+    fechar_socket(cliente->client_fd);
+}
+
+int executar_threads_cliente(DadosCliente *cliente){
     //variável para armazenar as threads de recebimento e envio periodico
     thread_t thread_recebimento;
     thread_t thread_envio_periodico;
 
+    //criação da thread de recebimento
+    if(!criar_thread(&thread_recebimento, receber_dados, cliente)){
+        fprintf(stderr, "Erro ao criar thread de recebimento.\n");
+        return 0; //continua para aceitar novas conexões mesmo que uma falhe
+    }
+
+    //criação da thread de envio periodico
+    if(!criar_thread(&thread_envio_periodico, enviar_periodicamente, cliente)){
+        fprintf(stderr, "Erro ao criar thread de envio periodico.\n");
+        definir_conectado(cliente, 0); //marca o cliente como desconectado
+        desligar_socket(cliente->client_fd); //fecha o socket do cliente para interromper a thread de recebimento
+        aguardar_thread(thread_recebimento); //espera a thread de recebimento terminar
+        return 0; //continua para aceitar novas conexões mesmo que uma falhe
+    }
+
+    aguardar_thread(thread_recebimento); //espera a thread de recebimento terminar
+    aguardar_thread(thread_envio_periodico); //espera a thread de envio periodico
+    
+    return 1; 
+}
+
+int atender_clientes(DadosCliente *cliente){
+
+            //envia mensagem de conexão para o cliente
+        if(!enviar_mensagem_conexao(cliente)){
+            return 0; //continua para aceitar novas conexões mesmo que uma falhe    
+        }
+
+        if(!executar_threads_cliente(cliente)){
+            return 0; //continua para aceitar novas conexões mesmo que uma falhe    
+        }  
+        return 1;
+}
+
+int main(){
+
+    
+    socket_t client_fd;
+
+    
+
+
+
     //informações do servidor e do cliente
-    struct sockaddr_in server_addr = {0};
+    
     struct sockaddr_in client_addr = {0};
     sock_len_t client_addr_len = sizeof(client_addr); //tamanho do endereço do cliente
 
@@ -160,45 +302,10 @@ int main(){
 
     protocol_init(); // incializar o mutex
 
-    //Criação do socket (IPv4, TCP, protocolo padrão)
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    socket_t server_fd = criar_servidor();
 
-    if (server_fd == PLATFORM_SOCKET_INVALIDO) {
-        mostrar_erro_socket("Erro ao criar o socket");
+    if(server_fd == PLATFORM_SOCKET_INVALIDO){
         finalizar_sockets(); //encerra o winsock que inicializamos no começo
-        return 1;
-    }
-
-    printf("Socket criado com sucesso.\n");
-
-    if(!configurar_reuso_endereco(server_fd)){
-        mostrar_erro_socket("Erro ao configurar reuso de endereço (setsockopt)");
-
-        fechar_socket(server_fd);
-        finalizar_sockets(); //encerra o winsock que inicializamos no começo
-        return 1;
-    }
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(PORT);
-
-    //configuração da bind (socket, endereço, tamanho do endereço)
-
-    if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == PLATFORM_SOCKET_ERRO) {
-        mostrar_erro_socket("Erro ao fazer bind");
-        fechar_socket(server_fd);
-        finalizar_sockets();
-        return 1;
-    }
-
-    printf("Bind realizado com sucesso na porta %d.\n", PORT);
-
-    //configuração do listen (socket, tamanho da fila de conexões)
-    if(listen(server_fd, 1) == PLATFORM_SOCKET_ERRO) {
-        mostrar_erro_socket("Erro no listen");
-        fechar_socket(server_fd);
-        finalizar_sockets();
         return 1;
     }
 
@@ -220,77 +327,18 @@ int main(){
 
         printf("Conexao aceita de %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
-        //registro do cliente em uma estrutura de dados para controle de conexão
-        DadosCliente cliente;
-        cliente.client_fd = client_fd;
-        cliente.conectado = 1; //marca o cliente como conectado
 
-        snprintf(cliente.protocolo.nome_usuario, MAX_NOME, "%s:%d", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));  // define o nome padrao do usuario como "IP:porta"
-        //inicializa estrutura da fila
-        cliente.protocolo.inicio = 0;
-        cliente.protocolo.fim = 0;
-        cliente.protocolo.quantidade = 0;
+        DadosCliente cliente; //estrutura para armazenar os dados do cliente (numero do cliente e status de conexão)
 
-
-        //inicializa o mutex do cliente
-        if(!iniciar_mutex(&cliente.mutex)) {
-            fprintf(stderr, "Erro ao inicializar mutex para o cliente.\n");
+        //inicializa o cliente, se falhar, fecha o socket e continua para aceitar novas conexões
+        if(inicializar_cliente(&cliente, client_fd, &client_addr) == 0){
             fechar_socket(client_fd);
             continue; //continua para aceitar novas conexões mesmo que uma falhe
         }
 
-        //obter a hora atual
-        time_t agora = time(NULL);
-        struct tm horario;
+        atender_clientes(&cliente); //atende o cliente, se falhar, fecha o socket e continua para aceitar novas conexões
 
-        if(!obter_horario_local(&agora, &horario)){
-            fprintf(stderr, "Erro ao obter horario local.\n");
-
-            destruir_mutex(&cliente.mutex);
-            fechar_socket(client_fd);
-
-            continue;
-        }
-
-        //Montar mensagem
-        strftime(mensagem, sizeof(mensagem), "%H:%M: CONECTADO!!\n", &horario);
-
-        //enviar mensagem para o cliente
-        printf("Enviando ao Cliente: %s", mensagem);
-        //configuração do send (socket, mensagem, tamanho da mensagem, flags)
-        if(send(client_fd, mensagem, (int)strlen(mensagem), 0) == PLATFORM_SOCKET_ERRO){
-            mostrar_erro_socket("Erro ao enviar mensagem");
-            destruir_mutex(&cliente.mutex); //destruir o mutex antes de sair
-            fechar_socket(client_fd);
-            continue; //continua para aceitar novas conexões mesmo que uma falhe
-        }
-
-        //criação da thread de recebimento
-        if(!criar_thread(&thread_recebimento, receber_dados, &cliente)){
-            fprintf(stderr, "Erro ao criar thread de recebimento.\n");
-            destruir_mutex(&cliente.mutex); //destruir o mutex antes de sair
-            fechar_socket(client_fd);
-            continue; //continua para aceitar novas conexões mesmo que uma falhe
-        }
-
-        //criação da thread de envio periodico
-        if(!criar_thread(&thread_envio_periodico, enviar_periodicamente, &cliente)){
-            fprintf(stderr, "Erro ao criar thread de envio periodico.\n");
-            definir_conectado(&cliente, 0); //marca o cliente como desconectado
-            desligar_socket(cliente.client_fd); //fecha o socket do cliente para interromper a thread de recebimento
-            aguardar_thread(thread_recebimento); //espera a thread de recebimento terminar
-            destruir_mutex(&cliente.mutex); //destruir o mutex antes de sair
-            fechar_socket(client_fd);
-            continue; //continua para aceitar novas conexões mesmo que uma falhe
-        }
-
-        
-        aguardar_thread(thread_recebimento); //espera a thread de recebimento terminar
-        aguardar_thread(thread_envio_periodico); //espera a thread de envio periodico
-        
-        destruir_mutex(&cliente.mutex); //destruir o mutex antes de sair
-
-        fechar_socket(client_fd);
+        limpar_cliente(&cliente); //limpa o cliente antes de sair
     }
 
     //fechar o socket do servidor, saida do loop ainda nao implementada
