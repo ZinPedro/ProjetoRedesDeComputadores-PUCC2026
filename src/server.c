@@ -275,8 +275,8 @@ int inicializar_cliente(DadosCliente *cliente, socket_t client_fd, struct sockad
     //inicializa o protocolo do cliente 
     if(!protocol_init(&cliente->protocolo)){
         fprintf(stderr, "Erro ao inicializar protocolo para o cliente.\n");
-        destruir_mutex(&cliente->mutex);
         destruir_mutex(&cliente->mutex_envio);
+        destruir_mutex(&cliente->mutex);
         return 0; // continua para aceitar novas conexões mesmo que uma falhe
     }
 
@@ -442,23 +442,33 @@ int obter_limite_clientes(int argc, char *argv[]){
     return (int)valor;
 }
 
+void enviar_mensagem_servidor_cheio(socket_t client_fd){
+    const char *mensagem = "Servidor cheio. Tente novamente mais tarde.\n";
+    if(send(client_fd, mensagem, (int)strlen(mensagem), 0) == PLATFORM_SOCKET_ERRO){
+        mostrar_erro_socket("Erro ao enviar mensagem de servidor cheio");
+    }
+}
+
+//working thread para gerenciar cada cliente, responsável por atender o cliente, remover da lista e limpar a memória
 THREAD_FUNC(gerenciar_cliente){
     ContextoCliente *contexto = (ContextoCliente *)arg; //trata ponteiro como contexto do cliente
     DadosCliente *cliente = contexto->cliente;
     ListaClientes *lista = contexto->lista;
 
     free(contexto); //libera a memória alocada para o contexto do cliente
+
+    //adiciona o cliente na lista de clientes, se falhar, envia mensagem de servidor cheio e limpa a memória do cliente
+    if(!adicionar_cliente(lista, cliente)){
+        fprintf(stderr, "Limite de clientes atingido.\n");
+        enviar_mensagem_servidor_cheio(cliente->client_fd);
+        limpar_cliente(cliente); //limpa o cliente caso a adição na lista falhe
+        return THREAD_RETURN;
+    }
+
     atender_clientes(cliente); //atende o cliente, se falhar, fecha o socket e continua para aceitar novas conexões
     remover_cliente(lista, cliente); //remove o cliente da lista de clientes
     limpar_cliente(cliente); //limpa o cliente
     return THREAD_RETURN;
-}
-
-void enviar_mensagem_servidor_cheio(socket_t client_fd){
-    const char *mensagem = "Servidor cheio. Tente novamente mais tarde.\n";
-    if(send(client_fd, mensagem, (int)strlen(mensagem), 0) == PLATFORM_SOCKET_ERRO){
-        mostrar_erro_socket("Erro ao enviar mensagem de servidor cheio");
-    }
 }
 
 int main(int argc, char *argv[]){
@@ -517,23 +527,14 @@ int main(int argc, char *argv[]){
 
         DadosCliente *cliente = criar_cliente(client_fd,&client_addr); //estrutura para armazenar os dados do cliente (numero do cliente e status de conexão)
 
-        
         if(cliente == NULL){
             fechar_socket(client_fd); //fecha o socket do cliente caso a criação da estrutura falhe
-            continue; //continua para aceitar novas conexões mesmo que uma falhe
-        }
-
-        if(!adicionar_cliente(&lista_clientes, cliente)){
-            fprintf(stderr, "Limite de clientes atingido.\n");
-            enviar_mensagem_servidor_cheio(cliente->client_fd);
-            limpar_cliente(cliente); //limpa o cliente caso a adição na lista falhe
             continue; //continua para aceitar novas conexões mesmo que uma falhe
         }
 
         ContextoCliente *contexto = (ContextoCliente *)malloc(sizeof(ContextoCliente)); //aloca memória para o contexto do cliente
         if(contexto == NULL){
             fprintf(stderr, "Erro ao alocar memoria para o contexto do cliente.\n");
-            remover_cliente(&lista_clientes, cliente); //remove o cliente da lista de clientes caso a alocação de memória falhe
             limpar_cliente(cliente); //limpa o cliente caso a alocação de memória falhe
             continue; //continua para aceitar novas conexões mesmo que uma falhe
         }
@@ -546,7 +547,6 @@ int main(int argc, char *argv[]){
         if(!criar_thread(&thread_gerente, gerenciar_cliente, contexto)){
             fprintf(stderr, "Erro ao criar thread para gerenciar o cliente.\n");
             free(contexto); //libera a memória alocada para o contexto do cliente caso a criação da thread falhe
-            remover_cliente(&lista_clientes, cliente); //remove o cliente da lista de clientes caso a criação da thread falhe
             limpar_cliente(cliente); //limpa o cliente caso a criação da thread falhe
             continue; //continua para aceitar novas conexões mesmo que uma falhe
         }
