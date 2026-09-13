@@ -1,4 +1,4 @@
-# Cliente-Servidor TCP - Redes de Computadores
+# Chat Multiusuário Cliente-Servidor TCP — Redes de Computadores
 
 Projeto acadêmico da disciplina de Redes de Computadores — Engenharia da Computação, PUC Campinas.
 
@@ -10,49 +10,99 @@ Projeto acadêmico da disciplina de Redes de Computadores — Engenharia da Comp
 
 ## Sobre o projeto
 
-Sistema de comunicação cliente-servidor implementado em C utilizando sockets TCP.
+Sala de bate-papo cliente-servidor implementada em C utilizando sockets TCP, onde vários usuários conectados simultaneamente trocam mensagens públicas entre si.
 
-O projeto permite estabelecer uma conexão entre um cliente e um servidor através da porta `8080`, possibilitando o envio e recebimento de mensagens.
+O servidor escuta na porta `8080` e atende múltiplos clientes ao mesmo tempo, cada um tratado de forma independente. A quantidade máxima de clientes simultâneos é definida por parâmetro na linha de comando.
 
 A aplicação utiliza threads para permitir comunicação bidirecional assíncrona e possui uma camada de compatibilidade entre Windows e Linux, responsável por abstrair diferenças de sockets, threads, mutex e outras funções dependentes do sistema operacional.
 
 ## Funcionalidades
 
-- Comunicação cliente-servidor utilizando TCP
-- Conexão através da porta `8080`
-- Envio de mensagens do cliente para o servidor
-- Recebimento de mensagens do servidor
+- Comunicação cliente-servidor utilizando TCP na porta `8080`
+- Múltiplos clientes conectados simultaneamente, tratados de forma independente
+- Limite de clientes configurável por linha de comando
+- Vaga liberada automaticamente quando um cliente desconecta
+- Recusa de conexão com mensagem informativa quando o limite é atingido
+- Mensagens públicas retransmitidas a todos os usuários conectados
+- Eco de confirmação para quem enviou a mensagem
+- Nome de usuário configurável, com padrão `IP:porta`
+- Envio periódico de data e hora pelo servidor, a cada 1 minuto
 - Uso de threads para envio e recebimento simultâneo
 - Uso de mutex para controle de dados compartilhados
-- Envio periódico de data e hora pelo servidor
-- Alteração do nome do usuário através do comando `:nome`
-- Encerramento da conexão através do comando `:quit`
 - Compatibilidade com Windows e Linux
+
+## Arquitetura
+
+### Servidor
+
+A thread principal permanece em `accept()`. A cada conexão aceita, cria uma thread de trabalho dedicada àquele cliente e volta imediatamente a aguardar novas conexões.
+
+Cada cliente possui duas threads:
+
+- **Thread 1** — lê continuamente do socket e grava os comandos recebidos na área de memória compartilhada daquele cliente.
+- **Thread 2** — varre periodicamente a memória compartilhada, executa a ação pendente e envia os resultados pela rede. Também é responsável pelo envio da data e hora a cada minuto.
+
+Os clientes conectados são mantidos em uma lista protegida por mutex, que permite retransmitir mensagens a todos e controlar o limite de conexões.
+
+### Cliente
+
+- **Thread 1** — lê os comandos digitados pelo usuário e envia ao servidor.
+- **Thread 2** — recebe dados do servidor e imprime na tela.
 
 ## Funcionamento
 
-O servidor cria um socket TCP e permanece aguardando conexões na porta `8080`.
-
-Quando um cliente se conecta, o servidor envia uma mensagem confirmando a conexão:
+Ao conectar, o cliente recebe a confirmação:
 
 ```text
 18:33: CONECTADO!!
 ```
 
-Durante a conexão, o servidor também envia periodicamente a data e hora atual:
+Caso o limite de clientes já tenha sido atingido, recebe no lugar:
+
+```text
+Servidor cheio. Tente novamente mais tarde.
+```
+
+e a conexão é encerrada.
+
+Durante a sessão, o servidor envia periodicamente a data e hora atual, mesmo que ninguém esteja conversando:
 
 ```text
 22/08/2026 18:33
 ```
 
-O cliente possui threads separadas para envio e recebimento, permitindo que mensagens sejam recebidas enquanto o usuário utiliza o terminal.
-
 ## Comandos
+
+### Enviar mensagem
+
+Qualquer texto que não comece com `:` é tratado como mensagem pública.
+
+```text
+oiii
+```
+
+Quem enviou recebe o eco:
+
+```text
+Voce digitou: oiii
+```
+
+Os demais usuários conectados recebem a mensagem formatada com nome e horário:
+
+```text
+Lucas (18:35): oiii
+```
 
 ### Alterar nome
 
 ```text
 :nome Antonio
+```
+
+Enquanto o nome não for definido, o usuário é identificado automaticamente pelo seu endereço, no formato `IP:porta`:
+
+```text
+127.0.0.1:54312 (18:36): oiii
 ```
 
 ### Desconectar
@@ -61,26 +111,12 @@ O cliente possui threads separadas para envio e recebimento, permitindo que mens
 :quit
 ```
 
-### Enviar mensagem
-
-Qualquer texto que não corresponda a um comando é tratado como mensagem.
-
-Exemplo:
-
-```text
-oiii
-```
-
-O servidor retorna ao remetente:
-
-```text
-Voce digitou: oiii
-```
+O cliente encerra a execução e o servidor libera a vaga para uma nova conexão.
 
 ## Estrutura do projeto
 
 ```text
-Projeto1RedesDeComputadores-PUCC2026/
+ProjetoRedesDeComputadores-PUCC2026/
 │
 ├── include/
 │   ├── platform.h
@@ -96,15 +132,17 @@ Projeto1RedesDeComputadores-PUCC2026/
 └── README.md
 ```
 
-- `cliente.c`: implementação do cliente TCP.
-- `server.c`: implementação do servidor e gerenciamento da conexão.
-- `protocol.c` / `protocol.h`: interpretação e processamento dos comandos e mensagens.
+- `cliente.c`: implementação do cliente TCP e das threads de envio e recebimento.
+- `server.c`: servidor, gerenciamento de múltiplas conexões, lista de clientes e retransmissão de mensagens.
+- `protocol.c` / `protocol.h`: interpretação dos comandos, memória compartilhada e formatação das mensagens.
+- `utils.c` / `utils.h`: funções auxiliares, como formatação de horário.
 - `platform.h`: camada de compatibilidade entre Windows e Linux.
-- `utils.c` / `utils.h`: funções auxiliares do projeto.
 
 ## Tecnologias
 
 C, TCP/IP, sockets, threads, mutex, Winsock, POSIX e pthreads.
+
+---
 
 # Como rodar
 
@@ -132,7 +170,7 @@ gcc --version
 Na pasta raiz do projeto:
 
 ```bash
-gcc src/server.c src/protocol.c -Iinclude -o server -pthread -Wall -Wextra
+gcc src/server.c src/protocol.c src/utils.c -Iinclude -o server -pthread -Wall -Wextra
 ```
 
 ### 3. Compilar o cliente
@@ -143,15 +181,15 @@ gcc src/cliente.c -Iinclude -o cliente -pthread -Wall -Wextra
 
 ### 4. Executar
 
-Abra dois terminais na pasta do projeto.
-
-Terminal 1 — servidor:
+O servidor exige o limite de clientes como argumento:
 
 ```bash
-./server
+./server 3
 ```
 
-Terminal 2 — cliente:
+Sem o argumento, ele informa o uso correto e encerra.
+
+Em outros terminais, execute os clientes:
 
 ```bash
 ./cliente
@@ -226,7 +264,7 @@ gcc --version
 No PowerShell, na pasta raiz do projeto:
 
 ```powershell
-gcc src/server.c src/protocol.c -Iinclude -o server.exe -lws2_32 -Wall -Wextra
+gcc src/server.c src/protocol.c src/utils.c -Iinclude -o server.exe -lws2_32 -Wall -Wextra
 ```
 
 ### 4. Compilar o cliente
@@ -237,15 +275,13 @@ gcc src/cliente.c -Iinclude -o cliente.exe -lws2_32 -Wall -Wextra
 
 ### 5. Executar
 
-Abra dois PowerShells na pasta do projeto.
-
-PowerShell 1 — servidor:
+PowerShell 1 — servidor, com o limite de clientes:
 
 ```powershell
-.\server.exe
+.\server.exe 3
 ```
 
-PowerShell 2 — cliente:
+Demais PowerShells — clientes:
 
 ```powershell
 .\cliente.exe
@@ -305,7 +341,19 @@ TcpTestSucceeded : True
 
 Os computadores podem estar conectados por Wi-Fi ou cabo, desde que estejam na mesma rede local e a comunicação entre dispositivos não esteja bloqueada pelo roteador ou firewall.
 
+---
+
 # Possíveis problemas
+
+## `Uso: ./server <limite_clientes>`
+
+O servidor exige a quantidade máxima de clientes como argumento. Informe um número inteiro positivo:
+
+```bash
+./server 3
+```
+
+---
 
 ## `gcc` não é reconhecido no Windows
 
@@ -344,6 +392,16 @@ Depois verifique:
 
 ```bash
 gcc --version
+```
+
+---
+
+## Erro de referência indefinida a `hora_atual`
+
+O `utils.c` precisa ser incluído na compilação do servidor. Confira se ele está na linha de comando:
+
+```bash
+gcc src/server.c src/protocol.c src/utils.c -Iinclude -o server -pthread -Wall -Wextra
 ```
 
 ---
@@ -433,22 +491,29 @@ Verifique:
 4. Se a porta `8080` está liberada no firewall.
 5. Se a rede Wi-Fi não possui isolamento de clientes ou rede de convidados.
 
+---
+
 # Testes realizados
 
 Durante os testes foram validados:
 
 - Compilação e execução em Linux
 - Compilação e execução em Windows
-- Comunicação entre cliente e servidor
 - Comunicação entre computadores diferentes na mesma rede local
-- Envio e recebimento de mensagens
-- Recebimento periódico de data e hora
+- Mensagem de conexão com horário
+- Eco de confirmação ao remetente
+- Retransmissão de mensagens entre múltiplos clientes, nos dois sentidos
+- Nome padrão `IP:porta` quando não definido
 - Alteração de nome com `:nome`
+- Limite de clientes respeitado, com recusa informativa ao exceder
+- Liberação da vaga após desconexão de um cliente
+- Recebimento periódico de data e hora
 - Desconexão com `:quit`
-- Retorno do servidor ao estado de espera após a desconexão do cliente
+- Desconexão abrupta de um cliente sem afetar os demais
+- Ausência de vazamento de memória verificada com Valgrind
 
 ## Nível do projeto
 
-O projeto aplica conceitos fundamentais de Redes de Computadores e programação concorrente em C, incluindo sockets TCP, comunicação cliente-servidor, threads, mutex e tratamento de diferenças entre sistemas operacionais.
+O projeto aplica conceitos fundamentais de Redes de Computadores e programação concorrente em C, incluindo sockets TCP, comunicação cliente-servidor com múltiplos clientes simultâneos, threads de trabalho, memória compartilhada, exclusão mútua com mutex e tratamento de diferenças entre sistemas operacionais.
 
 A estrutura separa comunicação, protocolo e funcionalidades específicas de cada plataforma, facilitando a organização e a evolução do código.
