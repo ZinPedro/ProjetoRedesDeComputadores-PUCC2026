@@ -78,49 +78,36 @@ void parse_input(const char *linha, shared_data_t *shared_data)
     liberar_mutex(&shared_data -> lock); // destranca o mutex
 }
 
-tipo_acao_t process_shared_data(shared_data_t *shared_data, char *saida, int tam_saida) 
+tipo_acao_t process_shared_data(shared_data_t *shared_data, char *eco, int tam_eco, char *broadcast, int tam_broadcast)
 {
     item_acao_t item;
+    char horario[TAM_HORARIO];
 
-    bloquear_mutex(&shared_data ->lock);
+    if (tam_eco > 0) eco[0] = '\0';
+    if (tam_broadcast > 0) broadcast[0] = '\0';
 
-    //verifica fila vazia
-    if(shared_data->quantidade == 0){
-        liberar_mutex(&shared_data -> lock);
-        saida[0] = '\0';
+    bloquear_mutex(&shared_data->lock);
+
+    if (shared_data->quantidade == 0) {
+        liberar_mutex(&shared_data->lock);
         return ACAO_NENHUMA;
     }
 
-    // copia proxima ação da fila
-    item = shared_data->fila[shared_data->inicio]; //copia ação da fila
-
-    shared_data->inicio = (shared_data->inicio +1) % MAX_FILA; //avança inicio na fila
-
+    item = shared_data->fila[shared_data->inicio];
+    shared_data->inicio = (shared_data->inicio + 1) % MAX_FILA;
     shared_data->quantidade--;
 
-    switch (item.acao) // switch case para checar todos os caso
-    { 
-        case ACAO_MUDAR_NOME:
-            strncpy(shared_data->nome_usuario, item.conteudo, MAX_NOME - 1);
-            shared_data->nome_usuario[MAX_NOME - 1] = '\0';
-            printf("DEBUG: nome atualizado para '%s'\n", shared_data->nome_usuario); // remover depois
-            saida[0] = '\0';
-            break;
-
-        case ACAO_ENVIAR_MSG:
-            snprintf(saida, tam_saida, "Voce digitou: %s\n", item.conteudo);
-            break;
-
-        case ACAO_DESCONECTAR:
-            saida[0] = '\0';
-            break;
-
-        default:
-            saida[0] = '\0';
-            break;
+    if (item.acao == ACAO_MUDAR_NOME) {
+        strncpy(shared_data->nome_usuario, item.conteudo, MAX_NOME - 1);
+        shared_data->nome_usuario[MAX_NOME - 1] = '\0';
+    } 
+    else if (item.acao == ACAO_ENVIAR_MSG) {
+        hora_atual(horario, sizeof(horario));
+        snprintf(eco, tam_eco, "Voce digitou: %s\n", item.conteudo);
+        snprintf(broadcast, tam_broadcast, "%s (%s): %s\n", shared_data->nome_usuario, horario, item.conteudo);
     }
 
-    liberar_mutex(&shared_data -> lock);
+    liberar_mutex(&shared_data->lock);
 
     return item.acao;
 }

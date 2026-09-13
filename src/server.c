@@ -37,6 +37,8 @@ typedef struct {
     ListaClientes *lista;
 } ContextoCliente;
 
+void enviar_para_todos(ListaClientes *lista, DadosCliente *remetente, const char *mensagem);
+
 //função para definir o status de conexão do cliente de forma thread-safe
 void definir_conectado(DadosCliente *cliente, int valor){
     bloquear_mutex(&cliente->mutex);
@@ -111,7 +113,9 @@ THREAD_FUNC(receber_dados) {
 //função para utilização da segunda thread, responsável por enviar periodicamente mensagens para o cliente
 THREAD_FUNC(enviar_periodicamente) {
 
-    DadosCliente *cliente = (DadosCliente *)arg;
+    ContextoCliente *contexto = (ContextoCliente *)arg;
+    DadosCliente *cliente = contexto->cliente;
+    ListaClientes *lista = contexto->lista;
 
     char mensagem[128];
 
@@ -125,24 +129,30 @@ THREAD_FUNC(enviar_periodicamente) {
             break;
         }
 
-    char resposta[BUFFER_SIZE];
-    tipo_acao_t acao = process_shared_data(&cliente->protocolo, resposta, sizeof(resposta)); // processa qual acao foi executada
+    char eco[BUFFER_SIZE];
+    char broadcast[BUFFER_SIZE];
+    tipo_acao_t acao = process_shared_data(&cliente->protocolo, eco, sizeof(eco), broadcast, sizeof(broadcast));
 
-    if (acao == ACAO_DESCONECTAR)  // se foi desconectar, desconecta
+    if (acao == ACAO_DESCONECTAR)
     {
         definir_conectado(cliente, 0);
         desligar_socket(cliente->client_fd);
         break;
     }
 
-    if (strlen(resposta) > 0) 
+    if (strlen(eco) > 0)
     {
-        if (!enviar_para_cliente(cliente, resposta)) {
-            mostrar_erro_socket("Erro ao enviar resposta do protocolo");
+        if (!enviar_para_cliente(cliente, eco)) {
+            mostrar_erro_socket("Erro ao enviar eco");
             definir_conectado(cliente, 0);
             desligar_socket(cliente->client_fd);
             break;
         }
+    }
+
+    if (strlen(broadcast) > 0)
+    {
+        enviar_para_todos(lista, cliente, broadcast);
     }
 
         time_t agora = time(NULL);
@@ -215,7 +225,7 @@ socket_t criar_servidor (void){
     printf("Bind realizado com sucesso na porta %d.\n", PORT);
 
         //configuração do listen (socket, tamanho da fila de conexões)
-    if(listen(server_fd, 1) == PLATFORM_SOCKET_ERRO) {
+    if(listen(server_fd, SOMAXCONN) == PLATFORM_SOCKET_ERRO) {
         mostrar_erro_socket("Erro no listen");
         fechar_socket(server_fd);
         
@@ -314,43 +324,44 @@ void limpar_cliente(DadosCliente *cliente){
     free(cliente);
 }
 
-int executar_threads_cliente(DadosCliente *cliente){
-    //variável para armazenar as threads de recebimento e envio periodico
+int executar_threads_cliente(ContextoCliente *contexto){
+    DadosCliente *cliente = contexto->cliente;
     thread_t thread_recebimento;
     thread_t thread_envio_periodico;
 
-    //criação da thread de recebimento
     if(!criar_thread(&thread_recebimento, receber_dados, cliente)){
         fprintf(stderr, "Erro ao criar thread de recebimento.\n");
-        return 0; //continua para aceitar novas conexões mesmo que uma falhe
+        return 0;
     }
 
-    //criação da thread de envio periodico
-    if(!criar_thread(&thread_envio_periodico, enviar_periodicamente, cliente)){
+    if(!criar_thread(&thread_envio_periodico, enviar_periodicamente, contexto)){
         fprintf(stderr, "Erro ao criar thread de envio periodico.\n");
-        definir_conectado(cliente, 0); //marca o cliente como desconectado
-        desligar_socket(cliente->client_fd); //fecha o socket do cliente para interromper a thread de recebimento
-        aguardar_thread(thread_recebimento); //espera a thread de recebimento terminar
-        return 0; //continua para aceitar novas conexões mesmo que uma falhe
+        definir_conectado(cliente, 0);
+        desligar_socket(cliente->client_fd);
+        aguardar_thread(thread_recebimento);
+        return 0;
     }
 
-    aguardar_thread(thread_recebimento); //espera a thread de recebimento terminar
-    aguardar_thread(thread_envio_periodico); //espera a thread de envio periodico
-    
-    return 1; 
+    aguardar_thread(thread_recebimento);
+    aguardar_thread(thread_envio_periodico);
+
+    return 1;
 }
 
-int atender_clientes(DadosCliente *cliente){
 
-            //envia mensagem de conexão para o cliente
-        if(!enviar_mensagem_conexao(cliente)){
-            return 0; //continua para aceitar novas conexões mesmo que uma falhe    
-        }
+int atender_clientes(ContextoCliente *contexto){
 
-        if(!executar_threads_cliente(cliente)){
-            return 0; //continua para aceitar novas conexões mesmo que uma falhe    
-        }  
-        return 1;
+    DadosCliente *cliente = contexto->cliente;
+
+    if(!enviar_mensagem_conexao(cliente)){
+        return 0;
+    }
+
+    if(!executar_threads_cliente(contexto)){
+        return 0;
+    }
+
+    return 1;
 }
 
 int inicializar_lista_clientes(ListaClientes *lista, int limite){
@@ -425,6 +436,27 @@ void remover_cliente(ListaClientes *lista, DadosCliente *cliente){
     liberar_mutex(&lista -> mutex);
 }
 
+//envia uma mensagem para todos os clientes conectados, menos o remetente
+void enviar_para_todos(ListaClientes *lista, DadosCliente *remetente, const char *mensagem){
+    bloquear_mutex(&lista->mutex);
+
+    for(int i = 0; i < lista->limite; i++){
+        DadosCliente *destino = lista->clientes[i];
+
+        if(destino == NULL || destino == remetente){
+            continue;
+        }
+
+        if(!verificar_conectado(destino)){
+            continue;
+        }
+
+        enviar_para_cliente(destino, mensagem);
+    }
+
+    liberar_mutex(&lista->mutex);
+}
+
 int obter_limite_clientes(int argc, char *argv[]){
     if (argc != 2) {
         fprintf(stderr, "Uso: %s <limite_clientes>\n", argv[0]);
@@ -443,16 +475,17 @@ int obter_limite_clientes(int argc, char *argv[]){
 }
 
 THREAD_FUNC(gerenciar_cliente){
-    ContextoCliente *contexto = (ContextoCliente *)arg; //trata ponteiro como contexto do cliente
+    ContextoCliente *contexto = (ContextoCliente *)arg;
     DadosCliente *cliente = contexto->cliente;
     ListaClientes *lista = contexto->lista;
 
-    free(contexto); //libera a memória alocada para o contexto do cliente
-    atender_clientes(cliente); //atende o cliente, se falhar, fecha o socket e continua para aceitar novas conexões
-    remover_cliente(lista, cliente); //remove o cliente da lista de clientes
-    limpar_cliente(cliente); //limpa o cliente
+    atender_clientes(contexto);
+    remover_cliente(lista, cliente);
+    limpar_cliente(cliente);
+    free(contexto);
     return THREAD_RETURN;
 }
+
 
 void enviar_mensagem_servidor_cheio(socket_t client_fd){
     const char *mensagem = "Servidor cheio. Tente novamente mais tarde.\n";

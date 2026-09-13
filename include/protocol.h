@@ -2,6 +2,7 @@
 #define PROTOCOL_H
 
 #include "platform.h"
+#include "utils.h"
 
 #define MAX_NOME 64
 #define MAX_MSG 512
@@ -49,6 +50,6 @@ void parse_input(const char *linha, shared_data_t *shared_data);
 
 // funcao para o servidor processar o que estiver pendente, escreve o texto formatado para imprimir, retorna 1 se tiver processado algo, 0 se nao processou
 
-tipo_acao_t process_shared_data(shared_data_t *shared_data, char *saida, int tam_saida);
+tipo_acao_t process_shared_data(shared_data_t *shared_data, char *eco, int tam_eco, char *broadcast, int tam_broadcast);
 
 #endif
