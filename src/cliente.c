@@ -12,6 +12,8 @@ typedef struct //dados compartilhados pela threads
 
     int conectado;
 
+    int pediu_quit;
+
     mutex_t mutex;
 
 }DadosCliente;
@@ -110,7 +112,7 @@ THREAD_FUNC(enviar_mensagens)
 
         if(strcmp(mensagem, ":quit") == 0)
         {
-            definir_conectado(cliente, 0);
+            cliente->pediu_quit = 1;
 
             break;
         }
@@ -161,6 +163,7 @@ int main()
 
        cliente.client_fd = clientSocket;
        cliente.conectado =1;
+       cliente.pediu_quit = 0;
 
        if(!iniciar_mutex(&cliente.mutex))
        {
@@ -197,8 +200,15 @@ int main()
             return 1;
        }
 
-       aguardar_thread(thread_envio);
-       desligar_socket(clientSocket);
+    aguardar_thread(thread_envio);
+
+    if(!cliente.pediu_quit)               // só acontece às vezes
+    {
+        definir_conectado(&cliente, 0);
+        desligar_socket(clientSocket);
+    }
+        
+       aguardar_thread(thread_recebimento);
        aguardar_thread(thread_recebimento);
        destruir_mutex(&cliente.mutex);
        fechar_socket(clientSocket); //fecha o socket após a conexão
