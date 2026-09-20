@@ -22,6 +22,9 @@ A aplicação utiliza threads para permitir comunicação bidirecional assíncro
 - Múltiplos clientes conectados simultaneamente, tratados de forma independente
 - Limite de clientes configurável por linha de comando
 - Vaga liberada automaticamente quando um cliente desconecta
+- Detecção de desconexão abrupta do servidor pelo cliente
+- Encerramento automático do cliente quando a conexão com o servidor é perdida
+- Servidor continua em execução após a desconexão de clientes e aceita novas conexões
 - Recusa de conexão com mensagem informativa quando o limite é atingido
 - Mensagens públicas retransmitidas a todos os usuários conectados
 - Eco de confirmação para quem enviou a mensagem
@@ -48,6 +51,7 @@ Os clientes conectados são mantidos em uma lista protegida por mutex, que permi
 
 - **Thread 1** — lê os comandos digitados pelo usuário e envia ao servidor.
 - **Thread 2** — recebe dados do servidor e imprime na tela.
+- O cliente monitora o estado da conexão e encerra automaticamente caso o servidor seja desconectado, sem depender de uma nova entrada do usuário.
 
 ## Funcionamento
 
@@ -511,6 +515,7 @@ Durante os testes foram validados:
 - Desconexão com `:quit`
 - Desconexão abrupta de um cliente sem afetar os demais
 - Ausência de vazamento de memória verificada com Valgrind
+- Cliente encerra automaticamente quando o servidor é finalizado inesperadamente
 
 ## Nível do projeto
 
