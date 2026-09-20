@@ -25,6 +25,7 @@
 #else
     #include <sys/types.h>
     #include <sys/socket.h>
+    #include <sys/select.h>
     #include <netinet/in.h>
     #include <arpa/inet.h>
     #include <unistd.h>
@@ -100,6 +101,34 @@ static inline void mostrar_erro_socket(const char *mensagem){
         fprintf(stderr, "%s. Código Winsock: %d\n", mensagem, WSAGetLastError());
     #else
         perror(mensagem);
+    #endif
+}
+
+static inline int entrada_disponivel(unsigned int tempo_limite_ms)
+{
+    #ifdef _WIN32
+        HANDLE entrada_padrao = GetStdHandle(STD_INPUT_HANDLE);
+        DWORD resultado = WaitForSingleObject(entrada_padrao, tempo_limite_ms);
+
+        if(resultado == WAIT_OBJECT_0) return 1;
+        if(resultado == WAIT_TIMEOUT) return 0;
+        return -1;
+        
+    #else
+        fd_set conjunto_leitura;
+        struct timeval tempo;
+
+        FD_ZERO(&conjunto_leitura);
+        FD_SET(STDIN_FILENO, &conjunto_leitura);
+
+        tempo.tv_sec = tempo_limite_ms / 1000;
+        tempo.tv_usec = (tempo_limite_ms % 1000) * 1000;
+
+        int resultado = select(STDIN_FILENO + 1, &conjunto_leitura, NULL, NULL, &tempo);
+
+        if(resultado > 0) return 1;
+        if(resultado == 0) return 0;
+        return -1;
     #endif
 }
 
