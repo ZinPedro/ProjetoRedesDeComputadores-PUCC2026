@@ -230,7 +230,6 @@ int main()
     }
 
     aguardar_thread(thread_recebimento);
-    aguardar_thread(thread_recebimento);
     destruir_mutex(&cliente.mutex);
     fechar_socket(clientSocket); // fecha o socket após a conexão
     finalizar_sockets();         // encerra o winsock que inicializamos no começo
